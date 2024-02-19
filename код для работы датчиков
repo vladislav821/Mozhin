@@ -1,0 +1,134 @@
+#define MIC_PIN_0 A3
+#define MIC_PIN_1 A4
+#define MIC_PIN_2 A5
+#ifndef clearBit
+#define clearBit(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
+#endif
+#ifndef setBit
+#define setBit(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
+#endif
+#define T 1000000
+#define WAIT_LIMIT 200
+#define VOL_THRESHOLD 55
+#include <ros.h>
+//#include <std_msgs/Int16.h>
+#include <std_msgs/Float32.h>
+
+ros::NodeHandle  nh;
+
+//std_msgs::Int16 str_msg;
+std_msgs::Float32 str_msg;
+ros::Publisher chatter("chatter", &str_msg);
+
+
+//Заводим переменную для сервопривода
+unsigned long timing;
+ 
+void setup()
+{
+  //Присоединяет переменную сервопривода к девятому пину, а также калибрует ширину пульса
+  pinMode(MIC_PIN_0, INPUT);
+  pinMode(MIC_PIN_1, INPUT);
+  pinMode(MIC_PIN_2, INPUT);
+  setBit(ADCSRA,ADPS2) ;
+  clearBit(ADCSRA,ADPS1) ;
+  clearBit(ADCSRA,ADPS0) ;
+  
+  nh.initNode();
+  nh.advertise(chatter);
+}
+ 
+
+//int vol[] = {0,0,0};
+//Сюда будем писать на каком шаге звук пришёл на каждый из микрофонов
+int tick[] = {0,0,0};
+//Микрофоны должны ловить один и тот же звук, а значит, разница в приходе звука на микрофоны 
+//не должна быть очень большой
+int wait = 0;
+void loop() 
+{
+  for (unsigned long i = 0; i < T; ++i) {
+   int vol[] = {analogRead(MIC_PIN_0), analogRead(MIC_PIN_1), analogRead(MIC_PIN_2)}; 
+    for (int j = 0; j < 3; ++j) {
+      //Если хоть на один микрофон уже пришёл звук, мы должны следить, чтобы он пришёл 
+      //и на остальные не позднее определённого WAIT_LIMIT момента
+      if (tick[0] || tick[1] || tick[2]) {
+        ++wait;
+        if (wait > WAIT_LIMIT) {
+          tick[0] = tick[1] = tick[2] = 0;
+          wait = 0;
+        }
+      }
+      if (vol[j] < VOL_THRESHOLD) {
+        continue;
+      }
+      if (!tick[j]) tick[j] = i;
+    }
+    
+    //Если сигнал пришёл на все три микрофона, определим положение сервопривода
+    //str_msg.data = (i);
+   if (tick[0] && tick[1] && tick[2]) {
+      //Весь этот отладочный вывод необязателен, но очень полезен
+
+        //str_msg.data = i;fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+      //Реализуем алгоритм определения положения источника звука, как было описано выше
+      int delta01 = tick[0]-tick[1];
+      int delta21 = tick[2]-tick[1];
+      tick[0] = tick[1] = tick[2] = 0;
+      if (delta01 <= delta21 && delta21 <= 0) {
+        str_msg.data = (float)(0);
+        chatter.publish( &str_msg );
+        nh.spinOnce();
+         if (millis() - timing > 100){ // Вместо 10000 подставьте нужное вам значение паузы 
+         timing = millis();}
+        continue;
+      }
+      if (delta21 <= delta01 && delta01 <= 0) {
+        str_msg.data = (float)(180);
+        chatter.publish( &str_msg );
+        nh.spinOnce();
+         if (millis() - timing > 100){ // Вместо 10000 подставьте нужное вам значение паузы 
+         timing = millis();}
+        continue;
+      }
+      if (delta01 >= delta21 && delta21 >= 0) {
+        float q = (float)(delta21) / delta01;
+       str_msg.data = (float)(135 - 45 * q);
+       chatter.publish( &str_msg );
+        nh.spinOnce();
+         if (millis() - timing > 100){ // Вместо 10000 подставьте нужное вам значение паузы 
+         timing = millis();}
+        continue;
+      }
+      if (delta21 >= delta01 && delta01 >= 0) {
+        float q = (float) (delta01) / delta21;
+        str_msg.data = (float)(45 + 45 * q);
+        chatter.publish( &str_msg );
+        nh.spinOnce();
+         if (millis() - timing > 100){ // Вместо 10000 подставьте нужное вам значение паузы 
+         timing = millis();}
+        continue;
+      }
+      if (delta01 >= 0 && delta21 <= 0) {
+        float q = (float) (-delta21) / (delta01 - delta21);
+        str_msg.data = (float)(135 + 45 * q);
+        chatter.publish( &str_msg );
+        nh.spinOnce();
+         if (millis() - timing > 100){ // Вместо 10000 подставьте нужное вам значение паузы 
+         timing = millis();}
+        continue;
+      }
+      if (delta21 >= 0 && delta01 <= 0) {
+        float q = (float) (-delta01) / (delta21 - delta01);
+        str_msg.data = (float)(45 * (1 - q));
+        chatter.publish( &str_msg );
+        nh.spinOnce();
+         if (millis() - timing > 100){ // Вместо 10000 подставьте нужное вам значение паузы 
+         timing = millis(); }
+ }
+        continue;
+      }
+      chatter.publish( &str_msg );
+      nh.spinOnce();
+    }
+  }
